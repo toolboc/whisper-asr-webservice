@@ -31,18 +31,19 @@
 #          replaced it with the CPU-only `onnxruntime` from PyPI.
 #
 # Build (on a Jetson or an aarch64 host with NVIDIA Container Runtime):
-#   docker build -f Dockerfile.jetson -t whisper-asr-jetson .
+#   docker build -f Dockerfile.jetson \
+#     -t whisper-asr-webservice-jetson:jp6.1-cu12.6-py3.10 .
 #
 # Customise JetPack / CUDA arch:
 #   docker build -f Dockerfile.jetson \
 #     --build-arg L4T_VERSION=r36.4.0 \
 #     --build-arg CUDA_ARCH_LIST="8.7" \
-#     -t whisper-asr-jetson .
+#     -t whisper-asr-webservice-jetson:jp6.1-cu12.6-py3.10 .
 #
 # Run:
 #   docker run --runtime nvidia --gpus all \
 #     -e ASR_MODEL=base -e ASR_ENGINE=faster_whisper \
-#     -p 9000:9000 whisper-asr-jetson
+#     -p 9000:9000 whisper-asr-webservice-jetson:jp6.1-cu12.6-py3.10
 # =============================================================================
 
 # -- Configurable build arguments --------------------------------------------
@@ -277,10 +278,27 @@ RUN pip install --no-deps .
 # startup (before any user code imports torchaudio).
 RUN SITE=$(/app/.venv/bin/python3 -c "import site; print(site.getsitepackages()[0])") \
     && printf '%s\n' \
-        '"""Shim: re-add torchaudio.AudioMetaData / torchaudio.info / list_audio_backends for Jetson builds."""' \
+        '"""Jetson compatibility shim (loaded via .pth at interpreter startup)."""' \
+        '"""  1. Re-add torchaudio.AudioMetaData / info / list_audio_backends"""' \
+        '"""  2. Patch torch.load to default weights_only=False for pyannote VAD"""' \
         'import importlib' \
         '' \
         'def _patch():' \
+        '    # -- torch.load: allow legacy pickle-based checkpoints ------------' \
+        '    # PyTorch >=2.6 defaults weights_only=True, but pyannote.audio VAD' \
+        '    # checkpoints contain omegaconf globals that are not allowlisted.' \
+        '    # In this container all checkpoints come from trusted sources' \
+        '    # (Hugging Face), so we restore the old default.' \
+        '    import torch, functools' \
+        '    _original_load = torch.load' \
+        '    @functools.wraps(_original_load)' \
+        '    def _patched_load(*args, **kwargs):' \
+        '        if kwargs.get("weights_only") is None:' \
+        '            kwargs["weights_only"] = False' \
+        '        return _original_load(*args, **kwargs)' \
+        '    torch.load = _patched_load' \
+        '' \
+        '    # -- torchaudio compat -------------------------------------------' \
         '    try:' \
         '        ta = importlib.import_module("torchaudio")' \
         '    except ImportError:' \
