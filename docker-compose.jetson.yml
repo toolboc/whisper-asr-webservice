@@ -2,6 +2,7 @@ version: "3.4"
 
 services:
   whisper-asr-webservice-jetson:
+    container_name: whisper-asr-webservice-jetson
     image: whisper-asr-webservice-jetson:jp6.1-cu12.6-py3.10
     build:
       context: .
