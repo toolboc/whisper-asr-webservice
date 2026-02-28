@@ -124,8 +124,12 @@ ARG JETSON_PIP_INDEX=https://pypi.jetson-ai-lab.io/jp6/cu126/+simple/
 
 ENV POETRY_VENV=/app/.venv \
     DEBIAN_FRONTEND=noninteractive \
-    # CTranslate2 shared library path + NVIDIA pip packages (cudss, cublas, …)
-    LD_LIBRARY_PATH="/opt/ctranslate2/lib:/app/.venv/lib/python3.10/site-packages/nvidia/cu12/lib:/app/.venv/lib/python3.10/site-packages/nvidia/cublas/lib:${LD_LIBRARY_PATH}" \
+    # CTranslate2 shared library path + NVIDIA pip packages (cudss)
+    # NOTE: Do NOT add nvidia/cublas/lib here — JetPack provides the correct
+    # system cuBLAS in /usr/local/cuda/lib64.  Loading the pip-installed
+    # nvidia-cublas-cu12 (pulled in by nvidia-cudss-cu12) alongside the
+    # system version causes CUBLAS_STATUS_ALLOC_FAILED at runtime.
+    LD_LIBRARY_PATH="/opt/ctranslate2/lib:/app/.venv/lib/python3.10/site-packages/nvidia/cu12/lib:${LD_LIBRARY_PATH}" \
     # NVIDIA Container Runtime settings
     NVIDIA_VISIBLE_DEVICES=all \
     NVIDIA_DRIVER_CAPABILITIES=compute,utility
@@ -211,7 +215,11 @@ RUN pip install \
 #    image.  The pip package from the Jetson index provides the shared lib.
 RUN pip install \
         --index-url ${JETSON_PIP_INDEX} \
-        nvidia-cudss-cu12
+        nvidia-cudss-cu12 \
+    && pip uninstall -y nvidia-cublas-cu12 2>/dev/null || true
+    # ↑ nvidia-cudss-cu12 pulls nvidia-cublas-cu12 as a dependency, but
+    #   loading it alongside JetPack's system cuBLAS (different version)
+    #   causes CUBLAS_STATUS_ALLOC_FAILED.  We only need libcudss.so.0.
 
 # 4. onnxruntime-gpu — Jetson AI Lab build with CUDA + TensorRT execution
 #    providers.  Pre-installed so the onnxruntime Python module is available.
