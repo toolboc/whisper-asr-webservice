@@ -281,9 +281,48 @@ RUN SITE=$(/app/.venv/bin/python3 -c "import site; print(site.getsitepackages()[
         '"""Jetson compatibility shim (loaded via .pth at interpreter startup)."""' \
         '"""  1. Re-add torchaudio.AudioMetaData / info / list_audio_backends"""' \
         '"""  2. Patch torch.load to default weights_only=False for pyannote VAD"""' \
+        '"""  3. Translate use_auth_token -> token for huggingface_hub >= 1.0"""' \
         'import importlib' \
         '' \
         'def _patch():' \
+        '    # -- huggingface_hub: use_auth_token -> token compat --------------' \
+        '    # huggingface_hub >= 1.0 removed the deprecated use_auth_token' \
+        '    # parameter, but pyannote.audio 3.x and whisperx still pass it.' \
+        '    # Since this .pth runs BEFORE pyannote is imported, patching' \
+        '    # huggingface_hub.hf_hub_download here means pyannotes' \
+        '    # "from huggingface_hub import hf_hub_download" picks up the' \
+        '    # patched version.  We also install an import hook to re-patch' \
+        '    # any modules that import it later.' \
+        '    import functools, sys' \
+        '    try:' \
+        '        import huggingface_hub' \
+        '        def _make_wrapper(fn):' \
+        '            @functools.wraps(fn)' \
+        '            def _wrapper(*args, **kwargs):' \
+        '                if "use_auth_token" in kwargs:' \
+        '                    kwargs["token"] = kwargs.pop("use_auth_token")' \
+        '                return fn(*args, **kwargs)' \
+        '            return _wrapper' \
+        '        # Patch all relevant functions in huggingface_hub namespace' \
+        '        for fn_name in ("hf_hub_download", "model_info", "hf_hub_url"):' \
+        '            fn = getattr(huggingface_hub, fn_name, None)' \
+        '            if fn is not None:' \
+        '                setattr(huggingface_hub, fn_name, _make_wrapper(fn))' \
+        '        # Also patch submodules that may already be loaded' \
+        '        for sub in ("huggingface_hub.file_download", "huggingface_hub.hf_api"):' \
+        '            mod = sys.modules.get(sub)' \
+        '            if mod is None:' \
+        '                try:' \
+        '                    mod = importlib.import_module(sub)' \
+        '                except ImportError:' \
+        '                    continue' \
+        '            for fn_name in ("hf_hub_download", "model_info", "hf_hub_url"):' \
+        '                fn = getattr(mod, fn_name, None)' \
+        '                if fn is not None and not hasattr(fn, "__wrapped__"):' \
+        '                    setattr(mod, fn_name, _make_wrapper(fn))' \
+        '    except ImportError:' \
+        '        pass' \
+        '' \
         '    # -- torch.load: allow legacy pickle-based checkpoints ------------' \
         '    # PyTorch >=2.6 defaults weights_only=True, but pyannote.audio VAD' \
         '    # checkpoints contain omegaconf globals that are not allowlisted.' \
